@@ -123,6 +123,21 @@ async function buscar() {
   }
 }
 
+// ---------- Turnos (horario institucional) ----------
+// Mañana: 7:20 a 11:40 | Tarde: 13:00 a 17:20 | Noche: 17:45 a 22:20
+// Se asigna el ÚLTIMO turno que ya haya comenzado según la hora actual;
+// antes de las 7:20 se toma 'mañana'. Así, entre turnos (ej. 11:45) el
+// registro se acumula al turno que ya está en curso.
+// Deduce el turno según los horarios de la institución. Vive SOLO en la app:
+// NO se guarda en la base de datos; para cada registro se deduce de su hora.
+// Mañana 07:20-11:40 | Tarde 13:00-17:20 | Noche 17:45-22:20. Fuera de rango: null.
+function turnoDeMinutos(minutos) {
+  if (minutos >= 7 * 60 + 20 && minutos <= 11 * 60 + 40) return 'Mañana';
+  if (minutos >= 13 * 60 && minutos <= 17 * 60 + 20) return 'Tarde';
+  if (minutos >= 17 * 60 + 45 && minutos <= 22 * 60 + 20) return 'Noche';
+  return null;
+}
+
 async function confirmar() {
   if (!estudianteActual) return;
 
@@ -133,8 +148,25 @@ async function confirmar() {
   const pad = (n) => String(n).padStart(2, '0');
   const fecha = ahora.getFullYear() + '-' + pad(ahora.getMonth() + 1) + '-' + pad(ahora.getDate());
   const hora = pad(ahora.getHours()) + ':' + pad(ahora.getMinutes());
+  const turnoActual = turnoDeMinutos(ahora.getHours() * 60 + ahora.getMinutes());
 
   try {
+    // Anti-duplicado: ¿ya figura una llegada tarde de este estudiante HOY en ESTE turno?
+    // El turno NO se guarda en la BD: se deduce de la hora de cada registro existente.
+    if (turnoActual) {
+      const snap = await db.collection('llegadas_tarde').where('dni', '==', estudianteActual.dni).get();
+      const yaRegistrado = snap.docs.some((d) => {
+        const r = d.data();
+        if (r.fecha !== fecha) return false;
+        const p = String(r.hora).split(':');
+        return turnoDeMinutos(Number(p[0]) * 60 + Number(p[1])) === turnoActual;
+      });
+      if (yaRegistrado) {
+        mostrarMensaje('⚠️ ' + estudianteActual.apellidoNombre + ' YA figura con llegada tarde HOY en el turno ' + turnoActual + '. No se duplicó el registro.', true);
+        return;   // sale sin guardar nada
+      }
+    }
+
     await db.collection('llegadas_tarde').add({
       dni: estudianteActual.dni,
       apellidoNombre: estudianteActual.apellidoNombre,
@@ -146,7 +178,8 @@ async function confirmar() {
     });
 
     const fechaMostrar = fecha.split('-').reverse().join('/');   // aaaa-mm-dd -> dd/mm/aaaa
-    mostrarMensaje('✅ Registrado: ' + estudianteActual.apellidoNombre + ' (' + fechaMostrar + ' ' + hora + ' hs)', false);
+    const msgTurno = turnoActual ? ' — Turno ' + turnoActual : '';
+    mostrarMensaje('✅ Registrado: ' + estudianteActual.apellidoNombre + ' (' + fechaMostrar + ' ' + hora + ' hs)' + msgTurno, false);
     cancelar();
 
   } catch (error) {
