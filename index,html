@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕐</text></svg>">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Registro de Llegadas Tarde</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; }
+  body { background: #f0f4f8; min-height: 100vh; display: flex; justify-content: center; align-items: flex-start; padding: 20px; }
+  .container { background: #fff; max-width: 480px; width: 100%; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.12); padding: 28px; margin-top: 20px; }
+  h1 { font-size: 1.4rem; color: #1a3c6e; margin-bottom: 6px; }
+  .sub { color: #666; font-size: .9rem; margin-bottom: 20px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; color: #333; }
+  input[type="text"] { width: 100%; padding: 12px; font-size: 1.3rem; letter-spacing: 2px; border: 2px solid #ccd6e0; border-radius: 8px; text-align: center; }
+  input[type="text"]:focus { outline: none; border-color: #1a73e8; }
+  .btn { width: 100%; padding: 14px; font-size: 1.1rem; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; margin-top: 14px; }
+  .btn-buscar { background: #1a73e8; color: #fff; }
+  .btn-confirmar { background: #2e7d32; color: #fff; }
+  .btn-cancelar { background: #c62828; color: #fff; }
+  .btn:disabled { background: #9e9e9e; cursor: not-allowed; }
+  .resultado { margin-top: 20px; padding: 16px; background: #e8f0fe; border-radius: 8px; display: none; }
+  .resultado h2 { color: #1a3c6e; font-size: 1.3rem; margin-bottom: 4px; }
+  .resultado p { color: #444; font-size: 1rem; }
+  .mensaje { margin-top: 16px; padding: 14px; border-radius: 8px; text-align: center; font-weight: 600; display: none; }
+  .ok { background: #e6f4ea; color: #1e7e34; }
+  .error { background: #fdecea; color: #b71c1c; }
+  .hora-actual { text-align: center; color: #888; font-size: .85rem; margin-top: 18px; }
+</style>
+<base target="_blank">
+</head>
+<body>
+<div class="container">
+  <h1>🕐 Registro de Llegadas Tarde</h1>
+  <p class="sub">Ingrese el DNI del estudiante (8 dígitos, sin puntos)</p>
+
+  <label for="dni">DNI del estudiante</label>
+  <input type="text" id="dni" maxlength="8" inputmode="numeric" placeholder="12345678" autocomplete="off">
+  <button class="btn btn-buscar" id="btnBuscar" onclick="buscar()">🔍 Buscar</button>
+
+  <div class="resultado" id="resultado">
+    <h2 id="lblNombre"></h2>
+    <p id="lblCurso"></p>
+    <button class="btn btn-confirmar" id="btnConfirmar" onclick="confirmar()">✅ Confirmar llegada tarde</button>
+    <button class="btn btn-cancelar" onclick="cancelar()">❌ Cancelar</button>
+  </div>
+
+  <div class="mensaje" id="mensaje"></div>
+  <p class="hora-actual" id="reloj"></p>
+</div>
+
+<script>
+// ============ CONFIGURACIÓN DE FIREBASE ============
+// Reemplazá estos valores por los de tu proyecto (Consola de Firebase > Configuración del proyecto)
+const firebaseConfig = {
+  apiKey: "AIzaSyBRxD3T0t-rzGMs8xl7BmfiuSBu_bw3bOw",
+  authDomain: "tarde-eest1.firebaseapp.com",
+  projectId: "tarde-eest1",
+  storageBucket: "tarde-eest1.firebasestorage.app",
+  messagingSenderId: "835462821695",
+  appId: "1:835462821695:web:469ce61fa1407c731d858a"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
+let estudianteActual = null;
+
+// Reloj en pantalla
+setInterval(() => {
+  const ahora = new Date();
+  document.getElementById('reloj').textContent =
+    'Hora actual: ' + ahora.toLocaleTimeString('es-AR', {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+}, 1000);
+
+// Permitir buscar con la tecla Enter
+document.getElementById('dni').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') buscar();
+});
+
+function mostrarMensaje(texto, esError) {
+  const m = document.getElementById('mensaje');
+  m.textContent = texto;
+  m.className = 'mensaje ' + (esError ? 'error' : 'ok');
+  m.style.display = 'block';
+  setTimeout(() => { m.style.display = 'none'; }, 5000);
+}
+
+async function buscar() {
+  const dni = document.getElementById('dni').value.trim();
+
+  // Validación: exactamente 8 dígitos
+  if (!/^[0-9]{8}$/.test(dni)) {
+    mostrarMensaje('⚠️ El DNI debe tener exactamente 8 dígitos numéricos.', true);
+    return;
+  }
+
+  document.getElementById('resultado').style.display = 'none';
+  mostrarMensaje('Buscando...', false);
+
+  try {
+    // El DNI es el ID del documento en la colección "estudiantes"
+    const doc = await db.collection('estudiantes').doc(dni).get();
+
+    if (!doc.exists) {
+      mostrarMensaje('❌ No se encontró ningún estudiante con el DNI ' + dni, true);
+      estudianteActual = null;
+      return;
+    }
+
+    estudianteActual = { dni: dni, ...doc.data() };
+
+    document.getElementById('lblNombre').textContent = estudianteActual.apellidoNombre;
+    document.getElementById('lblCurso').textContent = '📚 Curso: ' + estudianteActual.curso;
+    document.getElementById('resultado').style.display = 'block';
+    document.getElementById('mensaje').style.display = 'none';
+
+  } catch (error) {
+    console.error(error);
+    mostrarMensaje('❌ Error al conectar con la base de datos.', true);
+  }
+}
+
+async function confirmar() {
+  if (!estudianteActual) return;
+
+  const btn = document.getElementById('btnConfirmar');
+  btn.disabled = true;
+
+  const ahora = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  const fecha = ahora.getFullYear() + '-' + pad(ahora.getMonth() + 1) + '-' + pad(ahora.getDate());
+  const hora = pad(ahora.getHours()) + ':' + pad(ahora.getMinutes());
+
+  try {
+    await db.collection('llegadas_tarde').add({
+      dni: estudianteActual.dni,
+      apellidoNombre: estudianteActual.apellidoNombre,
+      curso: estudianteActual.curso,
+      fecha: fecha,
+      hora: hora,
+      notificado: false,          // se marca true cuando las autoridades envían el correo
+      creadoEl: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    const fechaMostrar = fecha.split('-').reverse().join('/');   // aaaa-mm-dd -> dd/mm/aaaa
+    mostrarMensaje('✅ Registrado: ' + estudianteActual.apellidoNombre + ' (' + fechaMostrar + ' ' + hora + ' hs)', false);
+    cancelar();
+
+  } catch (error) {
+    console.error(error);
+    mostrarMensaje('❌ Error al guardar el registro.', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function cancelar() {
+  estudianteActual = null;
+  document.getElementById('resultado').style.display = 'none';
+  document.getElementById('dni').value = '';
+  document.getElementById('dni').focus();
+}
+
+document.getElementById('dni').focus();
+</script>
+</body>
+</html>
